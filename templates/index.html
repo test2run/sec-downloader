@@ -1,239 +1,287 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SEC Filing Downloader</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SEC Filing Downloader</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f4f6f9;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-    }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f4f6f9;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
 
-    .card {
-      background: white;
-      border-radius: 12px;
-      box-shadow: 0 2px 16px rgba(0,0,0,0.08);
-      padding: 40px;
-      width: 100%;
-      max-width: 520px;
-    }
+      .card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08);
+        padding: 40px;
+        width: 100%;
+        max-width: 520px;
+      }
 
-    h1 {
-      font-size: 22px;
-      font-weight: 700;
-      color: #1a1a2e;
-      margin-bottom: 6px;
-    }
+      h1 {
+        font-size: 22px;
+        font-weight: 700;
+        color: #1a1a2e;
+        margin-bottom: 6px;
+      }
 
-    .subtitle {
-      font-size: 14px;
-      color: #6b7280;
-      margin-bottom: 32px;
-    }
+      .subtitle {
+        font-size: 14px;
+        color: #6b7280;
+        margin-bottom: 32px;
+      }
 
-    label {
-      display: block;
-      font-size: 13px;
-      font-weight: 600;
-      color: #374151;
-      margin-bottom: 6px;
-    }
+      label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 6px;
+      }
 
-    .field { margin-bottom: 22px; }
+      .field {
+        margin-bottom: 22px;
+      }
 
-    input[type="text"], select {
-      width: 100%;
-      padding: 10px 14px;
-      border: 1px solid #d1d5db;
-      border-radius: 8px;
-      font-size: 15px;
-      color: #111827;
-      outline: none;
-      transition: border-color 0.15s;
-    }
+      input[type="text"],
+      select {
+        width: 100%;
+        padding: 10px 14px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-size: 15px;
+        color: #111827;
+        outline: none;
+        transition: border-color 0.15s;
+      }
 
-    input[type="text"]:focus, select:focus {
-      border-color: #4f46e5;
-      box-shadow: 0 0 0 3px rgba(79,70,229,0.1);
-    }
+      input[type="text"]:focus,
+      select:focus {
+        border-color: #4f46e5;
+        box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+      }
 
-    .checkboxes {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
+      .checkboxes {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
 
-    .checkbox-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 12px;
-      border: 1px solid #e5e7eb;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.1s, border-color 0.1s;
-    }
+      .checkbox-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        cursor: pointer;
+        transition:
+          background 0.1s,
+          border-color 0.1s;
+      }
 
-    .checkbox-item:has(input:checked) {
-      background: #eef2ff;
-      border-color: #4f46e5;
-    }
+      .checkbox-item:has(input:checked) {
+        background: #eef2ff;
+        border-color: #4f46e5;
+      }
 
-    .checkbox-item input[type="checkbox"] {
-      accent-color: #4f46e5;
-      width: 16px;
-      height: 16px;
-      cursor: pointer;
-    }
+      .checkbox-item input[type="checkbox"] {
+        accent-color: #4f46e5;
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+      }
 
-    .checkbox-item span {
-      font-size: 14px;
-      font-weight: 500;
-      color: #374151;
-    }
+      .checkbox-item span {
+        font-size: 14px;
+        font-weight: 500;
+        color: #374151;
+      }
 
-    .checkbox-item small {
-      font-size: 11px;
-      color: #9ca3af;
-      display: block;
-    }
+      .checkbox-item small {
+        font-size: 11px;
+        color: #9ca3af;
+        display: block;
+      }
 
-    button[type="submit"] {
-      width: 100%;
-      padding: 12px;
-      background: #4f46e5;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      font-size: 15px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.15s;
-      margin-top: 8px;
-    }
+      button[type="submit"] {
+        width: 100%;
+        padding: 12px;
+        background: #4f46e5;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s;
+        margin-top: 8px;
+      }
 
-    button[type="submit"]:hover { background: #4338ca; }
-    button[type="submit"]:disabled { background: #9ca3af; cursor: not-allowed; }
+      button[type="submit"]:hover {
+        background: #4338ca;
+      }
+      button[type="submit"]:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+      }
 
-    .loading {
-      display: none;
-      text-align: center;
-      margin-top: 16px;
-      font-size: 14px;
-      color: #6b7280;
-    }
+      .loading {
+        display: none;
+        margin-top: 20px;
+        font-size: 13px;
+        color: #6b7280;
+        text-align: center;
+      }
 
-    .spinner {
-      display: inline-block;
-      width: 18px;
-      height: 18px;
-      border: 2px solid #d1d5db;
-      border-top-color: #4f46e5;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      vertical-align: middle;
-      margin-right: 6px;
-    }
+      .progress-track {
+        width: 100%;
+        height: 8px;
+        background: #e5e7eb;
+        border-radius: 99px;
+        overflow: hidden;
+        margin-bottom: 10px;
+      }
 
-    @keyframes spin { to { transform: rotate(360deg); } }
+      .progress-bar {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #4f46e5, #818cf8);
+        border-radius: 99px;
+        transition: width 0.4s ease;
+      }
 
-    .error {
-      background: #fef2f2;
-      border: 1px solid #fecaca;
-      color: #dc2626;
-      padding: 12px 14px;
-      border-radius: 8px;
-      font-size: 14px;
-      margin-bottom: 20px;
-    }
+      .error {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        color: #dc2626;
+        padding: 12px 14px;
+        border-radius: 8px;
+        font-size: 14px;
+        margin-bottom: 20px;
+      }
 
-    .hint {
-      font-size: 12px;
-      color: #9ca3af;
-      margin-top: 4px;
-    }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>SEC Filing Downloader</h1>
-    <p class="subtitle">Download SEC filings as a zip file. Files open in any browser.</p>
+      .hint {
+        font-size: 12px;
+        color: #9ca3af;
+        margin-top: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>SEC Filing Downloader</h1>
+      <p class="subtitle">
+        Download SEC filings as a zip file. Files open in any browser.
+      </p>
 
-    {% if error %}
-    <div class="error">{{ error }}</div>
-    {% endif %}
+      {% if error %}
+      <div class="error">{{ error }}</div>
+      {% endif %}
 
-    <form method="POST" action="/download" id="dlForm">
-
-      <div class="field">
-        <label for="ticker">Stock Ticker</label>
-        <input type="text" id="ticker" name="ticker" placeholder="e.g. AAPL, MSFT, NVDA"
-               value="{{ request.form.get('ticker', '') }}" autocomplete="off" required>
-        <p class="hint">US stocks only. Use the ticker symbol, not the company name.</p>
-      </div>
-
-      <div class="field">
-        <label>Filing Types</label>
-        <div class="checkboxes">
-          <label class="checkbox-item">
-            <input type="checkbox" name="forms" value="10-K" checked>
-            <div><span>10-K</span><small>Annual Report</small></div>
-          </label>
-          <label class="checkbox-item">
-            <input type="checkbox" name="forms" value="10-Q" checked>
-            <div><span>10-Q</span><small>Quarterly Report</small></div>
-          </label>
-          <label class="checkbox-item">
-            <input type="checkbox" name="forms" value="8-K">
-            <div><span>8-K</span><small>Current Report</small></div>
-          </label>
-          <label class="checkbox-item">
-            <input type="checkbox" name="forms" value="DEF 14A">
-            <div><span>DEF 14A</span><small>Proxy Statement</small></div>
-          </label>
-          <label class="checkbox-item">
-            <input type="checkbox" name="forms" value="S-1">
-            <div><span>S-1</span><small>IPO Registration</small></div>
-          </label>
+      <form method="POST" action="/download" id="dlForm">
+        <div class="field">
+          <label for="ticker">Stock Ticker</label>
+          <input
+            type="text"
+            id="ticker"
+            name="ticker"
+            placeholder="e.g. AAPL, MSFT, NVDA"
+            value="{{ request.form.get('ticker', '') }}"
+            autocomplete="off"
+            required
+          />
+          <p class="hint">
+            US stocks only. Use the ticker symbol, not the company name.
+          </p>
         </div>
-      </div>
 
-      <div class="field">
-        <label for="years">Years of History</label>
-        <select id="years" name="years">
-          <option value="1">1 year</option>
-          <option value="2">2 years</option>
-          <option value="3" selected>3 years (recommended)</option>
-          <option value="5">5 years</option>
-          <option value="10">10 years (slow)</option>
-        </select>
-        <p class="hint">More years = longer download time. 3 years is a good starting point.</p>
-      </div>
+        <div class="field">
+          <label>Filing Types</label>
+          <div class="checkboxes">
+            <label class="checkbox-item">
+              <input type="checkbox" name="forms" value="10-K" checked />
+              <div><span>10-K</span><small>Annual Report</small></div>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" name="forms" value="10-Q" checked />
+              <div><span>10-Q</span><small>Quarterly Report</small></div>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" name="forms" value="8-K" />
+              <div><span>8-K</span><small>Current Report</small></div>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" name="forms" value="DEF 14A" />
+              <div><span>DEF 14A</span><small>Proxy Statement</small></div>
+            </label>
+            <label class="checkbox-item">
+              <input type="checkbox" name="forms" value="S-1" />
+              <div><span>S-1</span><small>IPO Registration</small></div>
+            </label>
+          </div>
+        </div>
 
-      <button type="submit" id="submitBtn">Download ZIP</button>
+        <div class="field">
+          <label for="years">Years of History</label>
+          <select id="years" name="years">
+            <option value="5">5 years</option>
+            <option value="10" selected>10 years</option>
+            <option value="15">15 years</option>
+            <option value="20">20 years</option>
+          </select>
+          <p class="hint">More years = longer download time.</p>
+        </div>
 
-      <div class="loading" id="loadingMsg">
-        <span class="spinner"></span>
-        Downloading filings — this may take a minute or two, please wait...
-      </div>
+        <button type="submit" id="submitBtn">Download ZIP</button>
 
-    </form>
-  </div>
+        <div class="loading" id="loadingMsg">
+          <div class="progress-track">
+            <div class="progress-bar" id="progressBar"></div>
+          </div>
+          <span id="progressLabel">Preparing download...</span>
+        </div>
+      </form>
+    </div>
 
-  <script>
-    document.getElementById("dlForm").addEventListener("submit", function() {
-      document.getElementById("submitBtn").disabled = true;
-      document.getElementById("submitBtn").textContent = "Downloading...";
-      document.getElementById("loadingMsg").style.display = "block";
-    });
-  </script>
-</body>
+    <script>
+      document.getElementById("dlForm").addEventListener("submit", function () {
+        document.getElementById("submitBtn").disabled = true;
+        document.getElementById("submitBtn").textContent = "Downloading...";
+        document.getElementById("loadingMsg").style.display = "block";
+
+        var bar = document.getElementById("progressBar");
+        var label = document.getElementById("progressLabel");
+        var pct = 0;
+
+        var messages = [
+          "Fetching filing list...",
+          "Downloading filings...",
+          "Packaging files...",
+          "Almost there...",
+        ];
+
+        var interval = setInterval(function () {
+          // Slow down as we approach 90% so it never hits 100 before finishing
+          var step = pct < 40 ? 3 : pct < 70 ? 1.5 : pct < 88 ? 0.5 : 0;
+          pct = Math.min(pct + step, 90);
+          bar.style.width = pct + "%";
+          label.textContent = messages[Math.min(Math.floor(pct / 25), messages.length - 1)];
+          if (pct >= 90) clearInterval(interval);
+        }, 500);
+      });
+    </script>
+  </body>
 </html>
