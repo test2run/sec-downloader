@@ -33,7 +33,7 @@ def download():
     ticker = request.form.get("ticker", "").strip().upper()
     forms = request.form.getlist("forms")
     try:
-        years = max(1, min(10, int(request.form.get("years", 3))))
+        years = max(1, min(20, int(request.form.get("years", 10))))
     except ValueError:
         years = 3
 
