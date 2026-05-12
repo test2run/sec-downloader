@@ -3,14 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SEC Filing Downloader</title>
+    <title>SEC Filing Downloader — Processing</title>
     <style>
-      * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
-
+      * { box-sizing: border-box; margin: 0; padding: 0; }
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         background: #f4f6f9;
@@ -20,7 +15,6 @@
         justify-content: center;
         padding: 24px;
       }
-
       .card {
         background: white;
         border-radius: 12px;
@@ -28,133 +22,18 @@
         padding: 40px;
         width: 100%;
         max-width: 520px;
-      }
-
-      h1 {
-        font-size: 22px;
-        font-weight: 700;
-        color: #1a1a2e;
-        margin-bottom: 6px;
-      }
-
-      .subtitle {
-        font-size: 14px;
-        color: #6b7280;
-        margin-bottom: 32px;
-      }
-
-      label {
-        display: block;
-        font-size: 13px;
-        font-weight: 600;
-        color: #374151;
-        margin-bottom: 6px;
-      }
-
-      .field {
-        margin-bottom: 22px;
-      }
-
-      input[type="text"],
-      select {
-        width: 100%;
-        padding: 10px 14px;
-        border: 1px solid #d1d5db;
-        border-radius: 8px;
-        font-size: 15px;
-        color: #111827;
-        outline: none;
-        transition: border-color 0.15s;
-      }
-
-      input[type="text"]:focus,
-      select:focus {
-        border-color: #4f46e5;
-        box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
-      }
-
-      .checkboxes {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
-      }
-
-      .checkbox-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 10px 12px;
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        cursor: pointer;
-        transition:
-          background 0.1s,
-          border-color 0.1s;
-      }
-
-      .checkbox-item:has(input:checked) {
-        background: #eef2ff;
-        border-color: #4f46e5;
-      }
-
-      .checkbox-item input[type="checkbox"] {
-        accent-color: #4f46e5;
-        width: 16px;
-        height: 16px;
-        cursor: pointer;
-      }
-
-      .checkbox-item span {
-        font-size: 14px;
-        font-weight: 500;
-        color: #374151;
-      }
-
-      .checkbox-item small {
-        font-size: 11px;
-        color: #9ca3af;
-        display: block;
-      }
-
-      button[type="submit"] {
-        width: 100%;
-        padding: 12px;
-        background: #4f46e5;
-        color: white;
-        border: none;
-        border-radius: 8px;
-        font-size: 15px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: background 0.15s;
-        margin-top: 8px;
-      }
-
-      button[type="submit"]:hover {
-        background: #4338ca;
-      }
-      button[type="submit"]:disabled {
-        background: #9ca3af;
-        cursor: not-allowed;
-      }
-
-      .loading {
-        display: none;
-        margin-top: 20px;
-        font-size: 13px;
-        color: #6b7280;
         text-align: center;
       }
-
+      h1 { font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 8px; }
+      .subtitle { font-size: 14px; color: #6b7280; margin-bottom: 32px; }
       .progress-track {
         width: 100%;
         height: 8px;
         background: #e5e7eb;
         border-radius: 99px;
         overflow: hidden;
-        margin-bottom: 10px;
+        margin-bottom: 12px;
       }
-
       .progress-bar {
         height: 100%;
         width: 0%;
@@ -162,126 +41,81 @@
         border-radius: 99px;
         transition: width 0.4s ease;
       }
-
-      .error {
-        background: #fef2f2;
-        border: 1px solid #fecaca;
-        color: #dc2626;
-        padding: 12px 14px;
+      #statusMsg { font-size: 13px; color: #6b7280; margin-bottom: 24px; }
+      .btn {
+        display: inline-block;
+        padding: 12px 24px;
+        background: #4f46e5;
+        color: white;
         border-radius: 8px;
-        font-size: 14px;
-        margin-bottom: 20px;
+        font-size: 15px;
+        font-weight: 600;
+        text-decoration: none;
+        transition: background 0.15s;
       }
-
-      .hint {
-        font-size: 12px;
-        color: #9ca3af;
-        margin-top: 4px;
-      }
+      .btn:hover { background: #4338ca; }
+      #doneSection { display: none; }
+      .success-msg { font-size: 15px; color: #16a34a; font-weight: 600; margin-bottom: 20px; }
+      .another-link { display: block; margin-top: 16px; font-size: 13px; color: #6b7280; text-decoration: none; }
+      .another-link:hover { color: #374151; }
+      .error-msg { font-size: 14px; color: #dc2626; }
     </style>
   </head>
   <body>
     <div class="card">
-      <h1>SEC Filing Downloader</h1>
-      <p class="subtitle">
-        Download SEC filings as a zip file. Files open in any browser.
-      </p>
+      <h1>Downloading {{ ticker }} filings</h1>
+      <p class="subtitle">Please keep this page open. This may take a few minutes.</p>
 
-      {% if error %}
-      <div class="error">{{ error }}</div>
-      {% endif %}
-
-      <form method="POST" action="/download" id="dlForm">
-        <div class="field">
-          <label for="ticker">Stock Ticker</label>
-          <input
-            type="text"
-            id="ticker"
-            name="ticker"
-            placeholder="e.g. AAPL, MSFT, NVDA"
-            value="{{ request.form.get('ticker', '') }}"
-            autocomplete="off"
-            required
-          />
-          <p class="hint">
-            US stocks only. Use the ticker symbol, not the company name.
-          </p>
+      <div id="progressSection">
+        <div class="progress-track">
+          <div class="progress-bar" id="progressBar"></div>
         </div>
+        <p id="statusMsg">Fetching filing list...</p>
+      </div>
 
-        <div class="field">
-          <label>Filing Types</label>
-          <div class="checkboxes">
-            <label class="checkbox-item">
-              <input type="checkbox" name="forms" value="10-K" checked />
-              <div><span>10-K</span><small>Annual Report</small></div>
-            </label>
-            <label class="checkbox-item">
-              <input type="checkbox" name="forms" value="10-Q" checked />
-              <div><span>10-Q</span><small>Quarterly Report</small></div>
-            </label>
-            <label class="checkbox-item">
-              <input type="checkbox" name="forms" value="8-K" />
-              <div><span>8-K</span><small>Current Report</small></div>
-            </label>
-            <label class="checkbox-item">
-              <input type="checkbox" name="forms" value="DEF 14A" />
-              <div><span>DEF 14A</span><small>Proxy Statement</small></div>
-            </label>
-            <label class="checkbox-item">
-              <input type="checkbox" name="forms" value="S-1" />
-              <div><span>S-1</span><small>IPO Registration</small></div>
-            </label>
-          </div>
-        </div>
-
-        <div class="field">
-          <label for="years">Years of History</label>
-          <select id="years" name="years">
-            <option value="5">5 years</option>
-            <option value="10" selected>10 years</option>
-            <option value="15">15 years</option>
-            <option value="20">20 years</option>
-          </select>
-          <p class="hint">More years = longer download time.</p>
-        </div>
-
-        <button type="submit" id="submitBtn">Download ZIP</button>
-
-        <div class="loading" id="loadingMsg">
-          <div class="progress-track">
-            <div class="progress-bar" id="progressBar"></div>
-          </div>
-          <span id="progressLabel">Preparing download...</span>
-        </div>
-      </form>
+      <div id="doneSection">
+        <p class="success-msg">Your download is ready!</p>
+        <a href="/result/{{ job_id }}" class="btn">Download ZIP</a>
+        <a href="/" class="another-link">Download another</a>
+      </div>
     </div>
 
     <script>
-      document.getElementById("dlForm").addEventListener("submit", function () {
-        document.getElementById("submitBtn").disabled = true;
-        document.getElementById("submitBtn").textContent = "Downloading...";
-        document.getElementById("loadingMsg").style.display = "block";
+      var bar = document.getElementById("progressBar");
+      var statusMsg = document.getElementById("statusMsg");
+      var pct = 0;
+      var messages = ["Fetching filing list...", "Downloading filings...", "Packaging files...", "Almost there..."];
 
-        var bar = document.getElementById("progressBar");
-        var label = document.getElementById("progressLabel");
-        var pct = 0;
+      var progressInterval = setInterval(function () {
+        var step = pct < 40 ? 2 : pct < 70 ? 1 : pct < 88 ? 0.4 : 0;
+        pct = Math.min(pct + step, 90);
+        bar.style.width = pct + "%";
+        statusMsg.textContent = messages[Math.min(Math.floor(pct / 25), messages.length - 1)];
+      }, 500);
 
-        var messages = [
-          "Fetching filing list...",
-          "Downloading filings...",
-          "Packaging files...",
-          "Almost there...",
-        ];
+      function poll() {
+        fetch("/status/{{ job_id }}")
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            if (data.status === "done") {
+              clearInterval(progressInterval);
+              bar.style.width = "100%";
+              setTimeout(function () {
+                document.getElementById("progressSection").style.display = "none";
+                document.getElementById("doneSection").style.display = "block";
+              }, 400);
+            } else if (data.status === "error") {
+              clearInterval(progressInterval);
+              statusMsg.textContent = "Something went wrong. Please go back and try again.";
+              statusMsg.className = "error-msg";
+            } else {
+              setTimeout(poll, 3000);
+            }
+          })
+          .catch(function () { setTimeout(poll, 5000); });
+      }
 
-        var interval = setInterval(function () {
-          // Slow down as we approach 90% so it never hits 100 before finishing
-          var step = pct < 40 ? 3 : pct < 70 ? 1.5 : pct < 88 ? 0.5 : 0;
-          pct = Math.min(pct + step, 90);
-          bar.style.width = pct + "%";
-          label.textContent = messages[Math.min(Math.floor(pct / 25), messages.length - 1)];
-          if (pct >= 90) clearInterval(interval);
-        }, 500);
-      });
+      setTimeout(poll, 3000);
     </script>
   </body>
 </html>
