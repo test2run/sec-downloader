@@ -1,9 +1,9 @@
-import io
 import os
+import tempfile
 import time
 import zipfile
 
-from flask import Flask, render_template, request, send_file
+from flask import Flask, after_this_request, render_template, request, send_file
 
 from edgar import (
     RATE_LIMIT_DELAY, HEADERS,
@@ -56,25 +56,39 @@ def download():
         return render_template("index.html", forms=ALL_FORMS,
                                error=f"No filings found for {ticker} with the selected options.")
 
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for filing in filtered:
-            fname = build_filename(ticker, filing).replace(".pdf", ".html")
-            url = filing_url(cik, filing["accession"], filing["primary_doc"])
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    tmp_path = tmp.name
+    tmp.close()
+
+    try:
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for filing in filtered:
+                fname = build_filename(ticker, filing).replace(".pdf", ".html")
+                url = filing_url(cik, filing["accession"], filing["primary_doc"])
+                try:
+                    time.sleep(RATE_LIMIT_DELAY)
+                    html = download_html(url)
+                    zf.writestr(fname, html)
+                except Exception:
+                    pass
+
+        @after_this_request
+        def cleanup(response):
             try:
-                time.sleep(RATE_LIMIT_DELAY)
-                html = download_html(url)
-                zf.writestr(fname, html)
+                os.unlink(tmp_path)
             except Exception:
                 pass
+            return response
 
-    zip_buffer.seek(0)
-    return send_file(
-        zip_buffer,
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name=f"{ticker}_SEC_Filings.zip",
-    )
+        return send_file(
+            tmp_path,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name=f"{ticker}_SEC_Filings.zip",
+        )
+    except Exception:
+        os.unlink(tmp_path)
+        raise
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
