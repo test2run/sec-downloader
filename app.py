@@ -1,12 +1,14 @@
 import os
 import tempfile
+import threading
 import time
+import uuid
 import zipfile
 
-from flask import Flask, after_this_request, render_template, request, send_file
+from flask import Flask, after_this_request, jsonify, render_template, request, send_file
 
 from edgar import (
-    RATE_LIMIT_DELAY, HEADERS,
+    RATE_LIMIT_DELAY,
     load_ticker_map, resolve_ticker,
     get_filings, filter_filings,
     build_filename, filing_url, download_html,
@@ -15,6 +17,7 @@ from edgar import (
 app = Flask(__name__)
 
 _ticker_map = None
+jobs = {}
 
 def get_ticker_map():
     global _ticker_map
@@ -28,6 +31,36 @@ ALL_FORMS = ["10-K", "10-Q", "8-K", "DEF 14A", "S-1"]
 def index():
     return render_template("index.html", forms=ALL_FORMS)
 
+def run_download(job_id, ticker, cik, forms, years):
+    tmp_path = None
+    try:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        tmp_path = tmp.name
+        tmp.close()
+
+        all_filings = get_filings(cik)
+        filtered = filter_filings(all_filings, forms, years)
+
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for filing in filtered:
+                fname = build_filename(ticker, filing).replace(".pdf", ".html")
+                url = filing_url(cik, filing["accession"], filing["primary_doc"])
+                try:
+                    time.sleep(RATE_LIMIT_DELAY)
+                    html = download_html(url)
+                    zf.writestr(fname, html)
+                except Exception:
+                    pass
+
+        jobs[job_id] = {"status": "done", "path": tmp_path, "filename": f"{ticker}_SEC_Filings.zip"}
+    except Exception:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+        jobs[job_id] = {"status": "error"}
+
 @app.route("/download", methods=["POST"])
 def download():
     ticker = request.form.get("ticker", "").strip().upper()
@@ -35,7 +68,7 @@ def download():
     try:
         years = max(1, min(20, int(request.form.get("years", 10))))
     except ValueError:
-        years = 3
+        years = 10
 
     if not ticker:
         return render_template("index.html", forms=ALL_FORMS, error="Please enter a ticker symbol.")
@@ -49,46 +82,39 @@ def download():
         return render_template("index.html", forms=ALL_FORMS,
                                error=f"Ticker '{ticker}' not found. Make sure it's a valid US stock ticker.")
 
-    all_filings = get_filings(cik)
-    filtered = filter_filings(all_filings, forms, years)
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {"status": "pending"}
 
-    if not filtered:
-        return render_template("index.html", forms=ALL_FORMS,
-                               error=f"No filings found for {ticker} with the selected options.")
+    thread = threading.Thread(target=run_download, args=(job_id, ticker, cik, forms, years))
+    thread.daemon = True
+    thread.start()
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-    tmp_path = tmp.name
-    tmp.close()
+    return render_template("processing.html", job_id=job_id, ticker=ticker)
 
-    try:
-        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for filing in filtered:
-                fname = build_filename(ticker, filing).replace(".pdf", ".html")
-                url = filing_url(cik, filing["accession"], filing["primary_doc"])
-                try:
-                    time.sleep(RATE_LIMIT_DELAY)
-                    html = download_html(url)
-                    zf.writestr(fname, html)
-                except Exception:
-                    pass
+@app.route("/status/<job_id>")
+def status(job_id):
+    job = jobs.get(job_id, {"status": "not_found"})
+    return jsonify({"status": job["status"]})
 
-        @after_this_request
-        def cleanup(response):
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-            return response
+@app.route("/result/<job_id>")
+def result(job_id):
+    job = jobs.get(job_id)
+    if not job or job["status"] != "done":
+        return "File not ready or not found.", 404
 
-        return send_file(
-            tmp_path,
-            mimetype="application/zip",
-            as_attachment=True,
-            download_name=f"{ticker}_SEC_Filings.zip",
-        )
-    except Exception:
-        os.unlink(tmp_path)
-        raise
+    path = job["path"]
+    filename = job["filename"]
+
+    @after_this_request
+    def cleanup(response):
+        try:
+            os.unlink(path)
+        except Exception:
+            pass
+        jobs.pop(job_id, None)
+        return response
+
+    return send_file(path, mimetype="application/zip", as_attachment=True, download_name=filename)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
