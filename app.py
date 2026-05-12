@@ -43,9 +43,11 @@ def run_download(job_id, ticker, cik, forms, years):
 
         with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for filing in filtered:
-                fname = build_filename(ticker, filing).replace(".pdf", ".html")
-                url = filing_url(cik, filing["accession"], filing["primary_doc"])
                 try:
+                    if not filing.get("primary_doc"):
+                        continue
+                    fname = build_filename(ticker, filing).replace(".pdf", ".html")
+                    url = filing_url(cik, filing["accession"], filing["primary_doc"])
                     time.sleep(RATE_LIMIT_DELAY)
                     html = download_html(url)
                     zf.writestr(fname, html)
@@ -81,6 +83,9 @@ def download():
     except ValueError:
         return render_template("index.html", forms=ALL_FORMS,
                                error=f"Ticker '{ticker}' not found. Make sure it's a valid US stock ticker.")
+    except Exception:
+        return render_template("index.html", forms=ALL_FORMS,
+                               error="Could not reach SEC EDGAR. Please try again in a moment.")
 
     job_id = str(uuid.uuid4())
     jobs[job_id] = {"status": "pending"}
