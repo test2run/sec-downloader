@@ -36,6 +36,9 @@ import requests
 try:
     from xhtml2pdf import pisa
     XHTML2PDF_AVAILABLE = True
+    # Suppress xhtml2pdf's noisy per-property warnings on SEC HTML
+    logging.getLogger("xhtml2pdf").setLevel(logging.ERROR)
+    logging.getLogger("pisa").setLevel(logging.ERROR)
 except ImportError:
     XHTML2PDF_AVAILABLE = False
 
@@ -189,10 +192,11 @@ def html_to_pdf_bytes(html_bytes, base_url):
     style_tag = f"<style>{SEC_PDF_STYLESHEET}</style>"
     html_str = re.sub(r"(<head[^>]*>)", r"\1" + style_tag, html_str, count=1, flags=re.IGNORECASE)
     output = io.BytesIO()
-    result = pisa.CreatePDF(html_str, dest=output, encoding="utf-8", path=base_url)
-    if result.err:
-        raise RuntimeError(f"xhtml2pdf conversion failed with {result.err} error(s)")
-    return output.getvalue()
+    pisa.CreatePDF(html_str, dest=output, encoding="utf-8", path=base_url)
+    pdf_bytes = output.getvalue()
+    if not pdf_bytes:
+        raise RuntimeError("xhtml2pdf produced empty output")
+    return pdf_bytes
 
 def html_to_pdf(html_bytes, _base_url, output_path):
     """Save filing as HTML (open in any browser). Used by CLI without --pdf."""

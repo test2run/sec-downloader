@@ -58,7 +58,8 @@ def run_download(job_id, ticker, cik, forms, years, convert_pdf=False):
                             pdf = html_to_pdf_bytes(html, base_url)
                             zf.writestr(fname, pdf)
                             del pdf
-                        except Exception:
+                        except Exception as pdf_err:
+                            print(f"PDF conversion failed for {fname}: {pdf_err}")
                             zf.writestr(fname.replace(".pdf", "_PDF_FAILED.html"), html)
                     else:
                         fname = build_filename(ticker, filing).replace(".pdf", ".html")
