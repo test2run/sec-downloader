@@ -42,28 +42,41 @@
         <p>Fetching SEC filings for <strong>{{ ticker }}</strong>.{% if convert_pdf %} PDF conversion is on &mdash; this may take several minutes.{% else %} This may take a minute.{% endif %}</p>
         <div class="spinner" id="spinner"></div>
         <p class="status" id="status-msg">Contacting SEC EDGAR&hellip;</p>
+        <p class="status" id="waiting-msg" style="display:none;font-size:0.9rem;color:#666;margin-top:12px;">
+            Your ZIP file will download automatically into your Downloads folder when ready &mdash; you can leave this page open in the background.
+        </p>
     </div>
 
     <div style="margin-top: 24px;">
-        <a href="/" style="display:inline-block;padding:10px 24px;background:#2563eb;color:white;border-radius:6px;text-decoration:none;font-size:0.95rem;">&#8592; Start New Search</a>
+        <a href="/" style="display:inline-block;padding:10px 24px;background:#0a735e;color:white;border-radius:6px;text-decoration:none;font-size:0.95rem;">&#8592; Start New Search</a>
     </div>
 
     <script>
         const jobId = "{{ job_id }}";
         const statusMsg = document.getElementById("status-msg");
         const spinner = document.getElementById("spinner");
+        const waitingMsg = document.getElementById("waiting-msg");
+
+        // After 10 seconds hide the spinner and show the reassuring message
+        setTimeout(function() {
+            spinner.style.display = "none";
+            statusMsg.style.display = "none";
+            waitingMsg.style.display = "block";
+        }, 10000);
 
         function poll() {
             fetch("/status/" + jobId)
                 .then(r => r.json())
                 .then(data => {
                     if (data.status === "done") {
-                        statusMsg.textContent = "Download ready! Starting…";
-                        spinner.style.borderTopColor = "#16a34a";
+                        waitingMsg.textContent = "Download ready! Starting…";
+                        waitingMsg.style.display = "block";
                         window.location.href = "/result/" + jobId;
                     } else if (data.status === "error") {
                         spinner.style.display = "none";
-                        statusMsg.innerHTML = '<span class="error">Download failed. <a href="/">Try again</a>.</span>';
+                        statusMsg.style.display = "none";
+                        waitingMsg.style.display = "block";
+                        waitingMsg.innerHTML = '<span class="error">Download failed. <a href="/">Try again</a>.</span>';
                     } else {
                         setTimeout(poll, 2000);
                     }
