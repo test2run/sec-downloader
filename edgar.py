@@ -61,7 +61,7 @@ SEC_PDF_STYLESHEET = """
 @page { size: A4 landscape; margin: 1.5cm; }
 body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; }
 table { font-size: 8pt; width: 100%; table-layout: auto; }
-td, th { padding: 2px !important; word-wrap: break-word; overflow-wrap: break-word; }
+td, th { padding: 0 !important; word-wrap: break-word; overflow-wrap: break-word; }
 img { max-width: 100%; }
 """
 
@@ -184,14 +184,27 @@ def download_html(url):
     return r.content
 
 def _strip_table_widths(html_str):
-    """Remove inline width attributes from table elements — wide SEC tables cause
-    xhtml2pdf to compute sub-1pt cell widths which crash ReportLab layout."""
-    return re.sub(
+    """Remove all width constraints from table elements.
+    AAPL filings use both width= attributes and style='width:Npx' spacer columns;
+    either causes xhtml2pdf to compute sub-1pt cell widths that crash ReportLab."""
+    # Strip width= HTML attributes
+    html_str = re.sub(
         r'(<(?:table|tbody|thead|tfoot|tr|td|th|col|colgroup)\b[^>]*?)\s+width\s*=\s*(?:"[^"]*"|\'[^\']*\'|\S+)',
         r'\1',
         html_str,
         flags=re.IGNORECASE,
     )
+    # Strip width: from inline style= attributes on table elements
+    def _remove_width_from_style(m):
+        style = re.sub(r'\bwidth\s*:\s*[^;]+;?\s*', '', m.group(2), flags=re.IGNORECASE)
+        return f'{m.group(1)}style="{style}"'
+    html_str = re.sub(
+        r'(<(?:table|tbody|thead|tfoot|tr|td|th|col|colgroup)\b[^>]*?)\s+style\s*=\s*"([^"]*)"',
+        _remove_width_from_style,
+        html_str,
+        flags=re.IGNORECASE,
+    )
+    return html_str
 
 def html_to_pdf_bytes(html_bytes, base_url):
     """Convert HTML bytes to PDF bytes using xhtml2pdf. Returns PDF bytes or raises."""
