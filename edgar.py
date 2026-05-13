@@ -60,8 +60,8 @@ HEADERS = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 SEC_PDF_STYLESHEET = """
 @page { size: A4 landscape; margin: 1.5cm; }
 body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; }
-table { font-size: 8pt; width: 100%; }
-td, th { word-wrap: break-word; overflow-wrap: break-word; }
+table { font-size: 8pt; width: 100%; table-layout: auto; }
+td, th { padding: 2px !important; word-wrap: break-word; overflow-wrap: break-word; }
 img { max-width: 100%; }
 """
 
@@ -183,12 +183,22 @@ def download_html(url):
     r.raise_for_status()
     return r.content
 
+def _strip_table_widths(html_str):
+    """Remove inline width attributes from table elements — wide SEC tables cause
+    xhtml2pdf to compute sub-1pt cell widths which crash ReportLab layout."""
+    return re.sub(
+        r'(<(?:table|tbody|thead|tfoot|tr|td|th|col|colgroup)\b[^>]*?)\s+width\s*=\s*(?:"[^"]*"|\'[^\']*\'|\S+)',
+        r'\1',
+        html_str,
+        flags=re.IGNORECASE,
+    )
+
 def html_to_pdf_bytes(html_bytes, base_url):
     """Convert HTML bytes to PDF bytes using xhtml2pdf. Returns PDF bytes or raises."""
     if not XHTML2PDF_AVAILABLE:
         raise RuntimeError("xhtml2pdf is not installed. Run: pip install xhtml2pdf")
     html_str = html_bytes.decode("utf-8", errors="replace")
-    # Inject CSS overrides directly into the HTML
+    html_str = _strip_table_widths(html_str)
     style_tag = f"<style>{SEC_PDF_STYLESHEET}</style>"
     html_str = re.sub(r"(<head[^>]*>)", r"\1" + style_tag, html_str, count=1, flags=re.IGNORECASE)
     output = io.BytesIO()
