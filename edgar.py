@@ -33,16 +33,11 @@ from pathlib import Path
 
 import requests
 
-# Suppress WeasyPrint's extremely noisy CSS-warning logs on SEC HTML
-logging.getLogger("weasyprint").setLevel(logging.ERROR)
-logging.getLogger("fontTools").setLevel(logging.ERROR)
-logging.getLogger("cssselect2").setLevel(logging.ERROR)
-
 try:
-    from weasyprint import HTML as WeasyHTML, CSS as WeasyCSS
-    WEASYPRINT_AVAILABLE = True
+    from xhtml2pdf import pisa
+    XHTML2PDF_AVAILABLE = True
 except ImportError:
-    WEASYPRINT_AVAILABLE = False
+    XHTML2PDF_AVAILABLE = False
 
 # ---- CONFIG -----------------------------------------------------------------
 
@@ -58,31 +53,13 @@ RATE_LIMIT_DELAY = 0.11
 
 HEADERS = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 
-# CSS overrides for WeasyPrint rendering of SEC filings.
-# SEC filings have wide tables and external asset references that need special handling.
+# CSS injected into SEC filings before PDF conversion.
 SEC_PDF_STYLESHEET = """
-@page {
-    size: A4 landscape;
-    margin: 1.5cm;
-}
-body {
-    font-family: "Liberation Serif", "DejaVu Serif", serif;
-}
-* {
-    max-width: 100% !important;
-}
-table {
-    font-size: 8pt;
-    width: 100% !important;
-    max-width: 100% !important;
-    table-layout: auto;
-}
-td, th {
-    word-wrap: break-word;
-}
-tr, td {
-    page-break-inside: avoid;
-}
+@page { size: A4 landscape; margin: 1.5cm; }
+body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; }
+table { font-size: 8pt; width: 100%; }
+td, th { word-wrap: break-word; overflow-wrap: break-word; }
+img { max-width: 100%; }
 """
 
 # ---- TICKER → CIK LOOKUP ----------------------------------------------------
@@ -204,13 +181,18 @@ def download_html(url):
     return r.content
 
 def html_to_pdf_bytes(html_bytes, base_url):
-    """Convert HTML bytes to PDF bytes using WeasyPrint. Returns PDF bytes or raises."""
-    if not WEASYPRINT_AVAILABLE:
-        raise RuntimeError("WeasyPrint is not installed. Run: pip install weasyprint")
-    doc = WeasyHTML(file_obj=io.BytesIO(html_bytes), base_url=base_url)
-    css = WeasyCSS(string=SEC_PDF_STYLESHEET)
-    pdf_bytes = doc.write_pdf(stylesheets=[css])
-    return pdf_bytes
+    """Convert HTML bytes to PDF bytes using xhtml2pdf. Returns PDF bytes or raises."""
+    if not XHTML2PDF_AVAILABLE:
+        raise RuntimeError("xhtml2pdf is not installed. Run: pip install xhtml2pdf")
+    html_str = html_bytes.decode("utf-8", errors="replace")
+    # Inject CSS overrides directly into the HTML
+    style_tag = f"<style>{SEC_PDF_STYLESHEET}</style>"
+    html_str = re.sub(r"(<head[^>]*>)", r"\1" + style_tag, html_str, count=1, flags=re.IGNORECASE)
+    output = io.BytesIO()
+    result = pisa.CreatePDF(html_str, dest=output, encoding="utf-8", path=base_url)
+    if result.err:
+        raise RuntimeError(f"xhtml2pdf conversion failed with {result.err} error(s)")
+    return output.getvalue()
 
 def html_to_pdf(html_bytes, _base_url, output_path):
     """Save filing as HTML (open in any browser). Used by CLI without --pdf."""
