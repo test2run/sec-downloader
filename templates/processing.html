@@ -39,7 +39,7 @@
 <body>
     <div class="card">
         <h2>Preparing your download&hellip;</h2>
-        <p>Fetching SEC filings for <strong>{{ ticker }}</strong>. This may take a minute.</p>
+        <p>Fetching SEC filings for <strong>{{ ticker }}</strong>.{% if convert_pdf %} PDF conversion is on &mdash; this may take several minutes.{% else %} This may take a minute.{% endif %}</p>
         <div class="spinner" id="spinner"></div>
         <p class="status" id="status-msg">Contacting SEC EDGAR&hellip;</p>
     </div>

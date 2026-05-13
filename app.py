@@ -12,6 +12,7 @@ from edgar import (
     load_ticker_map, resolve_ticker,
     get_filings, filter_filings,
     build_filename, filing_url, download_html,
+    html_to_pdf_bytes,
 )
 
 app = Flask(__name__)
@@ -31,7 +32,7 @@ ALL_FORMS = ["10-K", "10-Q", "8-K", "DEF 14A", "S-1"]
 def index():
     return render_template("index.html", forms=ALL_FORMS)
 
-def run_download(job_id, ticker, cik, forms, years):
+def run_download(job_id, ticker, cik, forms, years, convert_pdf=False):
     tmp_path = None
     try:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
@@ -46,11 +47,24 @@ def run_download(job_id, ticker, cik, forms, years):
                 try:
                     if not filing.get("primary_doc"):
                         continue
-                    fname = build_filename(ticker, filing).replace(".pdf", ".html")
                     url = filing_url(cik, filing["accession"], filing["primary_doc"])
+                    base_url = url.rsplit("/", 1)[0] + "/"
                     time.sleep(RATE_LIMIT_DELAY)
                     html = download_html(url)
-                    zf.writestr(fname, html)
+
+                    if convert_pdf:
+                        fname = build_filename(ticker, filing)  # .pdf extension
+                        try:
+                            pdf = html_to_pdf_bytes(html, base_url)
+                            zf.writestr(fname, pdf)
+                            del pdf
+                        except Exception:
+                            zf.writestr(fname.replace(".pdf", "_PDF_FAILED.html"), html)
+                    else:
+                        fname = build_filename(ticker, filing).replace(".pdf", ".html")
+                        zf.writestr(fname, html)
+
+                    del html
                 except Exception:
                     pass
 
@@ -87,14 +101,16 @@ def download():
         return render_template("index.html", forms=ALL_FORMS,
                                error="Could not reach SEC EDGAR. Please try again in a moment.")
 
+    convert_pdf = request.form.get("convert_pdf") == "1"
+
     job_id = str(uuid.uuid4())
     jobs[job_id] = {"status": "pending"}
 
-    thread = threading.Thread(target=run_download, args=(job_id, ticker, cik, forms, years))
+    thread = threading.Thread(target=run_download, args=(job_id, ticker, cik, forms, years, convert_pdf))
     thread.daemon = True
     thread.start()
 
-    return render_template("processing.html", job_id=job_id, ticker=ticker)
+    return render_template("processing.html", job_id=job_id, ticker=ticker, convert_pdf=convert_pdf)
 
 @app.route("/status/<job_id>")
 def status(job_id):

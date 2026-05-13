@@ -2,23 +2,28 @@
 """
 EDGAR Filing Downloader
 =======================
-Downloads SEC filings for given tickers, names them per convention, and saves as PDF.
+Downloads SEC filings for given tickers, names them per convention, and saves as
+HTML (default) or PDF (opt-in via --pdf flag).
 
 Usage:
     python edgar.py AAPL
     python edgar.py AAPL MSFT NVDA
     python edgar.py AAPL --years 5 --forms 10-K 10-Q
     python edgar.py AAPL --output ~/Documents/SEC
+    python edgar.py AAPL --pdf            # convert to real PDF (slower)
 
 Filename convention:
-    {TICKER}_{FORM}_{DescriptiveName}_{Period}.pdf
-    e.g. AAPL_10K_AnnualReport_FY2024.pdf
-         AAPL_10Q_FirstQuarter_1Q2025.pdf
-         AAPL_8K_CurrentReport_2025-03-15.pdf
+    {TICKER}_{FORM}_{DescriptiveName}_{Period}.html  (default)
+    {TICKER}_{FORM}_{DescriptiveName}_{Period}.pdf   (with --pdf)
+    e.g. AAPL_10K_AnnualReport_FY2024.html
+         AAPL_10Q_FirstQuarter_1Q2025.html
+         AAPL_8K_CurrentReport_2025-03-15.html
 """
 
 import argparse
+import io
 import json
+import logging
 import os
 import re
 import sys
@@ -27,6 +32,17 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
+
+# Suppress WeasyPrint's extremely noisy CSS-warning logs on SEC HTML
+logging.getLogger("weasyprint").setLevel(logging.ERROR)
+logging.getLogger("fontTools").setLevel(logging.ERROR)
+logging.getLogger("cssselect2").setLevel(logging.ERROR)
+
+try:
+    from weasyprint import HTML as WeasyHTML, CSS as WeasyCSS
+    WEASYPRINT_AVAILABLE = True
+except ImportError:
+    WEASYPRINT_AVAILABLE = False
 
 # ---- CONFIG -----------------------------------------------------------------
 
@@ -37,10 +53,37 @@ DEFAULT_FORMS = ["10-K", "10-Q", "8-K", "DEF 14A", "S-1"]
 DEFAULT_YEARS = 10
 DEFAULT_OUTPUT = "~/SEC_Filings"
 
-# SEC rate limit: 10 req/sec. We use 0.15s = ~6 req/sec to be safe.
+# SEC rate limit: 10 req/sec. We use 0.11s = ~6 req/sec to be safe.
 RATE_LIMIT_DELAY = 0.11
 
 HEADERS = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"}
+
+# CSS overrides for WeasyPrint rendering of SEC filings.
+# SEC filings have wide tables and external asset references that need special handling.
+SEC_PDF_STYLESHEET = """
+@page {
+    size: A4 landscape;
+    margin: 1.5cm;
+}
+body {
+    font-family: "Liberation Serif", "DejaVu Serif", serif;
+}
+* {
+    max-width: 100% !important;
+}
+table {
+    font-size: 8pt;
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: auto;
+}
+td, th {
+    word-wrap: break-word;
+}
+tr, td {
+    page-break-inside: avoid;
+}
+"""
 
 # ---- TICKER → CIK LOOKUP ----------------------------------------------------
 
@@ -116,14 +159,13 @@ def quarter_from_date(date_str):
 QUARTER_WORDS = {1: "FirstQuarter", 2: "SecondQuarter", 3: "ThirdQuarter", 4: "FourthQuarter"}
 
 def build_filename(ticker, filing):
-    """Build the canonical filename for a filing."""
+    """Build the canonical filename for a filing (always .pdf extension; caller changes to .html if needed)."""
     form = filing["form"]
     form_clean = form.replace("-", "").replace(" ", "").replace("/", "")
     report_date = filing.get("report_date") or filing.get("filing_date")
     filing_date = filing.get("filing_date")
 
     if form == "10-K":
-        # Fiscal year from report_date
         year = report_date.split("-")[0] if report_date else filing_date.split("-")[0]
         return f"{ticker}_10K_AnnualReport_FY{year}.pdf"
 
@@ -161,8 +203,17 @@ def download_html(url):
     r.raise_for_status()
     return r.content
 
+def html_to_pdf_bytes(html_bytes, base_url):
+    """Convert HTML bytes to PDF bytes using WeasyPrint. Returns PDF bytes or raises."""
+    if not WEASYPRINT_AVAILABLE:
+        raise RuntimeError("WeasyPrint is not installed. Run: pip install weasyprint")
+    doc = WeasyHTML(file_obj=io.BytesIO(html_bytes), base_url=base_url)
+    css = WeasyCSS(string=SEC_PDF_STYLESHEET)
+    pdf_bytes = doc.write_pdf(stylesheets=[css])
+    return pdf_bytes
+
 def html_to_pdf(html_bytes, _base_url, output_path):
-    """Save filing as HTML (open in any browser)."""
+    """Save filing as HTML (open in any browser). Used by CLI without --pdf."""
     html_path = Path(str(output_path).replace(".pdf", ".html"))
     html_path.write_bytes(html_bytes)
     return True
@@ -174,7 +225,7 @@ def filter_filings(filings, forms, years):
     cutoff = (datetime.now() - timedelta(days=365 * years)).strftime("%Y-%m-%d")
     return [f for f in filings if f["form"] in forms and f["filing_date"] >= cutoff]
 
-def process_ticker(ticker, ticker_map, forms, years, output_root, save_html_too=False):
+def process_ticker(ticker, ticker_map, forms, years, output_root, save_html_too=False, use_pdf=False):
     print(f"\n=== {ticker} ===")
     try:
         cik, company = resolve_ticker(ticker, ticker_map)
@@ -195,7 +246,12 @@ def process_ticker(ticker, ticker_map, forms, years, output_root, save_html_too=
 
     success, failed = 0, 0
     for filing in filtered:
-        fname = build_filename(ticker, filing)
+        base_fname = build_filename(ticker, filing)
+        if use_pdf:
+            fname = base_fname  # .pdf
+        else:
+            fname = base_fname.replace(".pdf", ".html")
+
         out_path = out_dir / fname
 
         if out_path.exists():
@@ -207,16 +263,30 @@ def process_ticker(ticker, ticker_map, forms, years, output_root, save_html_too=
         try:
             time.sleep(RATE_LIMIT_DELAY)
             html = download_html(url)
+            base = url.rsplit("/", 1)[0] + "/"
 
             if save_html_too:
-                (out_dir / fname.replace(".pdf", ".html")).write_bytes(html)
+                html_fname = base_fname.replace(".pdf", ".html")
+                (out_dir / html_fname).write_bytes(html)
 
-            base = url.rsplit("/", 1)[0] + "/"
-            if html_to_pdf(html, base, out_path):
+            if use_pdf:
+                try:
+                    pdf = html_to_pdf_bytes(html, base)
+                    out_path.write_bytes(pdf)
+                    del pdf
+                    print(f"  ✓ {fname}")
+                    success += 1
+                except Exception as e:
+                    fail_fname = base_fname.replace(".pdf", "_PDF_FAILED.html")
+                    (out_dir / fail_fname).write_bytes(html)
+                    print(f"  ! PDF failed, saved HTML fallback: {fail_fname}: {e}")
+                    failed += 1
+            else:
+                out_path.write_bytes(html)
                 print(f"  ✓ {fname}")
                 success += 1
-            else:
-                failed += 1
+
+            del html
         except Exception as e:
             print(f"  ✗ {fname}: {e}")
             failed += 1
@@ -233,7 +303,9 @@ def main():
     parser.add_argument("--output", default=DEFAULT_OUTPUT,
                         help=f"Output root dir (default: {DEFAULT_OUTPUT})")
     parser.add_argument("--save-html", action="store_true",
-                        help="Also save the original HTML alongside the PDF")
+                        help="Also save the original HTML alongside the output file")
+    parser.add_argument("--pdf", action="store_true",
+                        help="Convert filings to PDF using WeasyPrint (slower; default is HTML)")
     args = parser.parse_args()
 
     print("Loading SEC ticker map...")
@@ -242,7 +314,7 @@ def main():
 
     for ticker in args.tickers:
         process_ticker(ticker, ticker_map, args.forms, args.years,
-                       args.output, save_html_too=args.save_html)
+                       args.output, save_html_too=args.save_html, use_pdf=args.pdf)
 
     print("\nAll done.")
 

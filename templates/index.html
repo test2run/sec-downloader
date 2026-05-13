@@ -245,6 +245,17 @@
           <p class="hint">More years = longer download time.</p>
         </div>
 
+        <div class="field">
+          <label class="checkbox-item" style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;font-weight:normal;cursor:pointer;">
+            <input type="checkbox" name="convert_pdf" value="1" id="convertPdf"
+              style="accent-color:#0a735e;width:16px;height:16px;margin-top:2px;flex-shrink:0;cursor:pointer;" />
+            <div>
+              <span style="font-size:14px;font-weight:600;color:#374151;">Convert to PDF</span>
+              <p class="hint" style="margin-top:4px;">&#9888;&#65039; PDF conversion takes considerably longer &mdash; typically 5&ndash;15 seconds per filing. A request for 10 years of filings across multiple form types may take several minutes. Leave unchecked for fast HTML download.</p>
+            </div>
+          </label>
+        </div>
+
         <button type="submit" id="submitBtn">Download ZIP</button>
 
         <div class="loading" id="loadingMsg">
