@@ -166,12 +166,19 @@ def download_html(url):
 
 def html_to_pdf_bytes(html_bytes, base_url):
     """Convert HTML bytes to PDF bytes using a headless Chromium browser."""
+    import re as _re
     from playwright.sync_api import sync_playwright
     html_str = html_bytes.decode("utf-8", errors="replace")
+    # Inject <base href> so relative URLs (images, CSS) resolve against the SEC filing's path.
+    base_tag = f'<base href="{base_url}">'
+    if _re.search(r"<head[^>]*>", html_str, flags=_re.IGNORECASE):
+        html_str = _re.sub(r"(<head[^>]*>)", r"\1" + base_tag, html_str, count=1, flags=_re.IGNORECASE)
+    else:
+        html_str = base_tag + html_str
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page()
-        page.set_content(html_str, base_url=base_url, wait_until="load")
+        page.set_content(html_str, wait_until="load")
         pdf_bytes = page.pdf(format="A4", print_background=True,
                              margin={"top": "1cm", "bottom": "1cm", "left": "1cm", "right": "1cm"})
         browser.close()
