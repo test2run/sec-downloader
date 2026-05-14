@@ -21,11 +21,8 @@ Filename convention:
 """
 
 import argparse
-import io
 import json
-import logging
 import os
-import re
 import sys
 import time
 from datetime import datetime, timedelta
@@ -33,14 +30,6 @@ from pathlib import Path
 
 import requests
 
-try:
-    from xhtml2pdf import pisa
-    XHTML2PDF_AVAILABLE = True
-    # Suppress xhtml2pdf's noisy per-property warnings on SEC HTML
-    logging.getLogger("xhtml2pdf").setLevel(logging.ERROR)
-    logging.getLogger("pisa").setLevel(logging.ERROR)
-except ImportError:
-    XHTML2PDF_AVAILABLE = False
 
 # ---- CONFIG -----------------------------------------------------------------
 
@@ -56,14 +45,6 @@ RATE_LIMIT_DELAY = 0.11
 
 HEADERS = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 
-# CSS injected into SEC filings before PDF conversion.
-SEC_PDF_STYLESHEET = """
-@page { size: A4 landscape; margin: 1.5cm; }
-body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; }
-table { font-size: 8pt; width: 100%; table-layout: auto; }
-td, th { padding: 0 !important; word-wrap: break-word; overflow-wrap: break-word; }
-img { max-width: 100%; }
-"""
 
 # ---- TICKER → CIK LOOKUP ----------------------------------------------------
 
@@ -183,49 +164,20 @@ def download_html(url):
     r.raise_for_status()
     return r.content
 
-def _strip_table_widths(html_str):
-    """Remove all width constraints from table elements.
-    AAPL filings use both width= attributes and style='width:Npx' spacer columns;
-    either causes xhtml2pdf to compute sub-1pt cell widths that crash ReportLab."""
-    # Strip width= HTML attributes
-    html_str = re.sub(
-        r'(<(?:table|tbody|thead|tfoot|tr|td|th|col|colgroup)\b[^>]*?)\s+width\s*=\s*(?:"[^"]*"|\'[^\']*\'|\S+)',
-        r'\1',
-        html_str,
-        flags=re.IGNORECASE,
-    )
-    # Strip width: from inline style= attributes on table elements
-    def _remove_width_from_style(m):
-        style = re.sub(r'\bwidth\s*:\s*[^;]+;?\s*', '', m.group(2), flags=re.IGNORECASE)
-        return f'{m.group(1)}style="{style}"'
-    html_str = re.sub(
-        r'(<(?:table|tbody|thead|tfoot|tr|td|th|col|colgroup)\b[^>]*?)\s+style\s*=\s*"([^"]*)"',
-        _remove_width_from_style,
-        html_str,
-        flags=re.IGNORECASE,
-    )
-    return html_str
-
 def html_to_pdf_bytes(html_bytes, base_url):
-    """Convert HTML bytes to PDF bytes using xhtml2pdf. Returns PDF bytes or raises."""
-    if not XHTML2PDF_AVAILABLE:
-        raise RuntimeError("xhtml2pdf is not installed. Run: pip install xhtml2pdf")
+    """Convert HTML bytes to PDF bytes using a headless Chromium browser."""
+    from playwright.sync_api import sync_playwright
     html_str = html_bytes.decode("utf-8", errors="replace")
-    html_str = _strip_table_widths(html_str)
-    style_tag = f"<style>{SEC_PDF_STYLESHEET}</style>"
-    html_str = re.sub(r"(<head[^>]*>)", r"\1" + style_tag, html_str, count=1, flags=re.IGNORECASE)
-    output = io.BytesIO()
-    pisa.CreatePDF(html_str, dest=output, encoding="utf-8", path=base_url)
-    pdf_bytes = output.getvalue()
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.set_content(html_str, base_url=base_url, wait_until="load")
+        pdf_bytes = page.pdf(format="A4", print_background=True,
+                             margin={"top": "1cm", "bottom": "1cm", "left": "1cm", "right": "1cm"})
+        browser.close()
     if not pdf_bytes:
-        raise RuntimeError("xhtml2pdf produced empty output")
+        raise RuntimeError("Playwright produced empty PDF output")
     return pdf_bytes
-
-def html_to_pdf(html_bytes, _base_url, output_path):
-    """Save filing as HTML (open in any browser). Used by CLI without --pdf."""
-    html_path = Path(str(output_path).replace(".pdf", ".html"))
-    html_path.write_bytes(html_bytes)
-    return True
 
 # ---- MAIN --------------------------------------------------------------------
 
