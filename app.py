@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -6,6 +8,36 @@ import uuid
 import zipfile
 
 from flask import Flask, after_this_request, jsonify, render_template, request, send_file
+
+
+def ensure_chromium_installed():
+    """Make sure Playwright's Chromium binary is present. If not, install it.
+    This is idempotent — Playwright skips the download if the binary is already cached.
+    Runs at app startup so the build step is no longer load-bearing."""
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            # Probe whether the executable exists by asking Playwright for its path.
+            exe_path = p.chromium.executable_path
+            if exe_path and os.path.exists(exe_path):
+                print(f"[startup] Chromium present at {exe_path}", flush=True)
+                return
+        print("[startup] Chromium missing — running 'playwright install chromium'...", flush=True)
+        result = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode == 0:
+            print("[startup] Chromium install succeeded.", flush=True)
+        else:
+            print(f"[startup] Chromium install FAILED (rc={result.returncode})", flush=True)
+            print(f"[startup] stdout: {result.stdout}", flush=True)
+            print(f"[startup] stderr: {result.stderr}", flush=True)
+    except Exception as e:
+        print(f"[startup] ensure_chromium_installed errored: {e}", flush=True)
+
+
+ensure_chromium_installed()
 
 from edgar import (
     RATE_LIMIT_DELAY,
