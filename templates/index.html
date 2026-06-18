@@ -236,12 +236,9 @@
 
         <div class="field">
           <label for="years">Years of History</label>
-          <select id="years" name="years">
-            <option value="5">5 years</option>
-            <option value="10" selected>10 years</option>
-            <option value="15">15 years</option>
-            <option value="20">20 years</option>
-          </select>
+          <input type="number" id="years" name="years" value="10" min="1" max="20" step="1"
+            oninput="this.value = Math.min(20, Math.max(1, Math.round(this.value) || 1))"
+            style="width:80px;" />
           <p class="hint">More years = longer download time.</p>
         </div>
 
