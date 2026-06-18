@@ -86,7 +86,7 @@ Passing `--pdf` (CLI) or checking **Convert to PDF** in the web UI enables Weasy
 
 ## Web UI
 
-The app is hosted at [sec-downloader.onrender.com](https://sec-downloader.onrender.com). Enter a ticker, choose filing types and years, optionally check **Convert to PDF**, and click Download ZIP.
+The app is hosted at [sec-downloader.onrender.com](https://sec-downloader.onrender.com). Enter a ticker, choose filing types, enter the number of years of history (1–20, defaults to 10), optionally check **Convert to PDF**, and click Download ZIP.
 
 ---
 
