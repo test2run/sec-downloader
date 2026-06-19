@@ -64,6 +64,19 @@
             waitingMsg.style.display = "block";
         }, 10000);
 
+        // If the server loses the job (e.g. the worker restarted), /status returns
+        // "not_found". Tolerate a few in case of a transient blip, then fail loudly
+        // instead of polling forever.
+        let notFoundCount = 0;
+        const NOT_FOUND_LIMIT = 5;
+
+        function showFailure() {
+            spinner.style.display = "none";
+            statusMsg.style.display = "none";
+            waitingMsg.style.display = "block";
+            waitingMsg.innerHTML = '<span class="error">Download failed. <a href="/">Try again</a>.</span>';
+        }
+
         function poll() {
             fetch("/status/" + jobId)
                 .then(r => r.json())
@@ -73,10 +86,13 @@
                         waitingMsg.style.display = "block";
                         window.location.href = "/result/" + jobId;
                     } else if (data.status === "error") {
-                        spinner.style.display = "none";
-                        statusMsg.style.display = "none";
-                        waitingMsg.style.display = "block";
-                        waitingMsg.innerHTML = '<span class="error">Download failed. <a href="/">Try again</a>.</span>';
+                        showFailure();
+                    } else if (data.status === "not_found") {
+                        if (++notFoundCount >= NOT_FOUND_LIMIT) {
+                            showFailure();
+                        } else {
+                            setTimeout(poll, 2000);
+                        }
                     } else {
                         setTimeout(poll, 2000);
                     }

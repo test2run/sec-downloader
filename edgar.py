@@ -164,27 +164,78 @@ def download_html(url):
     r.raise_for_status()
     return r.content
 
-def html_to_pdf_bytes(html_bytes, base_url):
-    """Convert HTML bytes to PDF bytes using a headless Chromium browser."""
+# Chromium launch flags tuned for low-memory containers (e.g. Render free tier,
+# ~512 MB RAM with a tiny /dev/shm). Without these, rendering a large inline-XBRL
+# filing makes Chromium write past the default 64 MB /dev/shm and the process is
+# OOM-killed by the OS — which crashes the whole worker (not a catchable error).
+CHROMIUM_ARGS = [
+    "--disable-dev-shm-usage",  # use /tmp instead of the tiny /dev/shm
+    "--no-sandbox",             # required in most container environments
+    "--single-process",         # one process => lower peak memory
+    "--disable-gpu",
+]
+
+# Per-filing render timeouts (ms). A single heavy filing fails fast into the
+# caller's fallback instead of hanging and piling up.
+RENDER_TIMEOUT_MS = 60_000
+
+
+def _inject_base_href(html_bytes, base_url):
+    """Decode filing HTML and inject <base href> so relative URLs resolve."""
     import re as _re
-    from playwright.sync_api import sync_playwright
     html_str = html_bytes.decode("utf-8", errors="replace")
-    # Inject <base href> so relative URLs (images, CSS) resolve against the SEC filing's path.
     base_tag = f'<base href="{base_url}">'
     if _re.search(r"<head[^>]*>", html_str, flags=_re.IGNORECASE):
-        html_str = _re.sub(r"(<head[^>]*>)", r"\1" + base_tag, html_str, count=1, flags=_re.IGNORECASE)
-    else:
-        html_str = base_tag + html_str
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        page.set_content(html_str, wait_until="load")
+        return _re.sub(r"(<head[^>]*>)", r"\1" + base_tag, html_str, count=1, flags=_re.IGNORECASE)
+    return base_tag + html_str
+
+
+def render_pdf_with_browser(browser, html_bytes, base_url):
+    """Render a single filing to PDF using an already-launched Playwright browser.
+    Lets the caller reuse one browser across many filings (see app.py)."""
+    html_str = _inject_base_href(html_bytes, base_url)
+    page = browser.new_page()
+    try:
+        page.set_content(html_str, wait_until="load", timeout=RENDER_TIMEOUT_MS)
         pdf_bytes = page.pdf(format="A4", print_background=True,
                              margin={"top": "1cm", "bottom": "1cm", "left": "1cm", "right": "1cm"})
-        browser.close()
+    finally:
+        page.close()
     if not pdf_bytes:
         raise RuntimeError("Playwright produced empty PDF output")
     return pdf_bytes
+
+
+def html_to_pdf_bytes(html_bytes, base_url, browser=None):
+    """Convert HTML bytes to PDF bytes.
+
+    Primary engine is headless Chromium (Playwright). If a `browser` is passed it
+    is reused (callers processing many filings should launch one browser for the
+    whole job). If Chromium fails, falls back to WeasyPrint so a render crash on
+    one filing still yields a PDF where possible."""
+    if browser is not None:
+        return render_pdf_with_browser(browser, html_bytes, base_url)
+
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            br = p.chromium.launch(args=CHROMIUM_ARGS)
+            try:
+                return render_pdf_with_browser(br, html_bytes, base_url)
+            finally:
+                br.close()
+    except Exception as chromium_err:
+        try:
+            return _weasyprint_pdf_bytes(html_bytes, base_url)
+        except Exception:
+            raise chromium_err
+
+
+def _weasyprint_pdf_bytes(html_bytes, base_url):
+    """Fallback PDF renderer using WeasyPrint (pure-Python, low memory)."""
+    from weasyprint import HTML
+    html_str = _inject_base_href(html_bytes, base_url)
+    return HTML(string=html_str, base_url=base_url).write_pdf()
 
 # ---- MAIN --------------------------------------------------------------------
 

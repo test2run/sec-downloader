@@ -40,7 +40,7 @@ def ensure_chromium_installed():
 ensure_chromium_installed()
 
 from edgar import (
-    RATE_LIMIT_DELAY,
+    RATE_LIMIT_DELAY, CHROMIUM_ARGS,
     load_ticker_map, resolve_ticker,
     get_filings, filter_filings,
     build_filename, filing_url, download_html,
@@ -74,30 +74,56 @@ def run_download(job_id, ticker, cik, forms, years, convert_pdf=False):
         all_filings = get_filings(cik)
         filtered = filter_filings(all_filings, forms, years)
 
-        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for filing in filtered:
+        # When converting to PDF, launch ONE Chromium for the whole job (with the
+        # low-memory flags) and reuse it across all filings, instead of launching a
+        # browser per filing. Falls through to HTML on any launch failure.
+        playwright_ctx = None
+        browser = None
+        if convert_pdf:
+            try:
+                from playwright.sync_api import sync_playwright
+                playwright_ctx = sync_playwright().start()
+                browser = playwright_ctx.chromium.launch(args=CHROMIUM_ARGS)
+            except Exception as e:
+                print(f"[run_download] Could not launch Chromium, saving HTML instead: {e}")
+                browser = None
+
+        try:
+            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for filing in filtered:
+                    try:
+                        if not filing.get("primary_doc"):
+                            continue
+                        url = filing_url(cik, filing["accession"], filing["primary_doc"])
+                        base_url = url.rsplit("/", 1)[0] + "/"
+                        time.sleep(RATE_LIMIT_DELAY)
+                        html = download_html(url)
+
+                        if convert_pdf and browser is not None:
+                            fname = build_filename(ticker, filing)  # .pdf extension
+                            try:
+                                pdf = html_to_pdf_bytes(html, base_url, browser=browser)
+                                zf.writestr(fname, pdf)
+                                del pdf
+                            except Exception as pdf_err:
+                                print(f"PDF conversion failed for {fname}: {pdf_err}")
+                                zf.writestr(fname.replace(".pdf", "_PDF_FAILED.html"), html)
+                        else:
+                            fname = build_filename(ticker, filing).replace(".pdf", ".html")
+                            zf.writestr(fname, html)
+
+                        del html
+                    except Exception:
+                        pass
+        finally:
+            if browser is not None:
                 try:
-                    if not filing.get("primary_doc"):
-                        continue
-                    url = filing_url(cik, filing["accession"], filing["primary_doc"])
-                    base_url = url.rsplit("/", 1)[0] + "/"
-                    time.sleep(RATE_LIMIT_DELAY)
-                    html = download_html(url)
-
-                    if convert_pdf:
-                        fname = build_filename(ticker, filing)  # .pdf extension
-                        try:
-                            pdf = html_to_pdf_bytes(html, base_url)
-                            zf.writestr(fname, pdf)
-                            del pdf
-                        except Exception as pdf_err:
-                            print(f"PDF conversion failed for {fname}: {pdf_err}")
-                            zf.writestr(fname.replace(".pdf", "_PDF_FAILED.html"), html)
-                    else:
-                        fname = build_filename(ticker, filing).replace(".pdf", ".html")
-                        zf.writestr(fname, html)
-
-                    del html
+                    browser.close()
+                except Exception:
+                    pass
+            if playwright_ctx is not None:
+                try:
+                    playwright_ctx.stop()
                 except Exception:
                     pass
 

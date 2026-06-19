@@ -27,9 +27,15 @@ Downloads SEC filings (10-K, 10-Q, 8-K, DEF 14A, S-1) for any US-listed ticker a
 
 ### 1. Install Python dependencies
 ```bash
-pip install flask requests gunicorn weasyprint
+pip install -r requirements.txt
+playwright install chromium
 ```
-WeasyPrint needs a couple of system libs:
+PDF conversion renders filings with **headless Chromium via Playwright**
+(`playwright install chromium` downloads the browser). On Linux servers, install
+Chromium's OS libraries too with `playwright install --with-deps chromium`.
+
+A pure-Python **WeasyPrint** fallback is used automatically if Chromium fails. It
+needs a couple of system libs if you want the fallback to work:
 - **macOS:** `brew install pango`
 - **Linux/WSL:** `sudo apt install libpango-1.0-0 libpangoft2-1.0-0`
 - **Windows:** see https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#windows
@@ -77,9 +83,10 @@ python edgar.py --help
 
 By default, filings are saved as **HTML files** that open in any browser. This is fast and reliable.
 
-Passing `--pdf` (CLI) or checking **Convert to PDF** in the web UI enables WeasyPrint conversion. This produces real PDFs but is significantly slower:
+Passing `--pdf` (CLI) or checking **Convert to PDF** in the web UI renders each filing with headless Chromium. This produces real PDFs but is significantly slower and memory-hungry:
 - Typically **5–15 seconds per filing**
 - A 10-year request across multiple form types may take **several minutes**
+- **Memory:** Chromium needs real RAM. Very large filings (e.g. heavy inline-XBRL 10-Ks from high-volume filers) can exceed a 512 MB host. On Render's free tier this can OOM-kill the worker — use HTML mode, or a host with **≥1 GB RAM** for reliable PDF conversion of large filers.
 - If a filing fails to convert, a `_PDF_FAILED.html` fallback is saved instead — open it in your browser to read the filing
 
 ---
@@ -92,17 +99,19 @@ The app is hosted at [sec-downloader.onrender.com](https://sec-downloader.onrend
 
 ## Render deployment
 
-The app is configured in `render.yaml`. WeasyPrint requires system libraries that must be installed during the build phase.
+The app is configured in `render.yaml`. PDF conversion uses Chromium, whose browser binary and OS libraries are installed during the build phase.
 
-**Build command** (set this in the Render dashboard under your service → Settings → Build Command):
+**Build command:**
 ```
-apt-get update && apt-get install -y libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libfontconfig1 libcairo2 libgdk-pixbuf2.0-0 && pip install -r requirements.txt
+pip install -r requirements.txt && playwright install --with-deps chromium
 ```
 
 **Start command:**
 ```
 gunicorn app:app --workers 1 --threads 4 --timeout 120
 ```
+
+> **Note on the free tier:** the 512 MB free plan is enough for HTML downloads and PDF conversion of typical filings, but large inline-XBRL filings can OOM-kill the worker (the page shows a generic error). For reliable PDF conversion of high-volume filers, use a plan with **≥1 GB RAM**.
 
 ---
 
@@ -133,7 +142,7 @@ Now in any Claude Code session, `/edgar AAPL` triggers it.
 
 - **Filing types covered:** 10-K, 10-Q, 8-K, DEF 14A, S-1 by default. Add/remove via `--forms`. Any EDGAR form code works (e.g. `S-4`, `20-F`, `13F-HR`).
 - **HTML output:** Files open directly in any browser. All text and tables render correctly.
-- **PDF quality:** WeasyPrint renders on A4 landscape with table scaling. Most filings look good; heavily formatted filings may have minor layout differences.
+- **PDF quality:** Filings render on A4 via headless Chromium, so layout closely matches the browser. Most filings look good; very large filings are memory-intensive (see PDF conversion note).
 - **Foreign filers:** US-listed foreign companies file 20-F (annual) and 6-K instead of 10-K/10-Q. Use `--forms 20-F 6-K` for those (e.g. `python edgar.py BABA --forms 20-F 6-K`).
 - **Rate limits:** Script sleeps 0.11s between requests (~6 req/sec), well under SEC's 10 req/sec cap.
 - **Resume support:** If a file already exists, it's skipped — safe to re-run.
@@ -146,7 +155,7 @@ Now in any Claude Code session, `/edgar AAPL` triggers it.
 | Issue | Fix |
 |---|---|
 | `403 Forbidden` | Update `USER_AGENT` with a real email |
-| `weasyprint` import error | Install system libs (see Setup step 1) |
+| PDF conversion errors / worker crashes | Large filing exceeded available RAM (Chromium OOM). Use HTML mode or a host with ≥1 GB RAM. Run `playwright install --with-deps chromium` if Chromium itself won't launch. |
 | Ticker not found | Use the exact SEC ticker (e.g. `BRK-B` not `BRKB`); check `https://www.sec.gov/cgi-bin/browse-edgar` |
 | PDF looks broken | The `_PDF_FAILED.html` fallback file will be in the ZIP — open it in a browser |
-| Internal server error on Render | Ensure the build command installs the WeasyPrint system libraries (see Render deployment section) |
+| Internal server error on Render | Ensure the build command runs `playwright install --with-deps chromium` (see Render deployment section). For large filings, see the memory note. |
