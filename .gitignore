@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+SEC_Filings/
+*.zip
