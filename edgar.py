@@ -179,6 +179,20 @@ CHROMIUM_ARGS = [
 # caller's fallback instead of hanging and piling up.
 RENDER_TIMEOUT_MS = 60_000
 
+# --- Free-tier PDF safety knobs (used by the web app) ---
+# Filings whose downloaded HTML exceeds this are NOT sent to Chromium; they are
+# delivered as plain HTML instead, since the largest docs are the ones that risk
+# OOMing a 512 MB host. Tune via env var PDF_MAX_HTML_MB.
+PDF_MAX_HTML_BYTES = int(float(os.environ.get("PDF_MAX_HTML_MB", "6")) * 1024 * 1024)
+
+# Hard address-space cap (MB) applied inside the render subprocess via RLIMIT_AS
+# (POSIX only). Keeps a runaway render from triggering the OS OOM-killer against
+# the web worker. Tune via env var RENDER_MEM_LIMIT_MB.
+RENDER_MEM_LIMIT_MB = int(os.environ.get("RENDER_MEM_LIMIT_MB", "450"))
+
+# Wall-clock timeout (seconds) the parent gives each render subprocess.
+RENDER_SUBPROCESS_TIMEOUT = int(os.environ.get("RENDER_SUBPROCESS_TIMEOUT", "90"))
+
 
 def _inject_base_href(html_bytes, base_url):
     """Decode filing HTML and inject <base href> so relative URLs resolve."""

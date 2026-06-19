@@ -40,12 +40,50 @@ def ensure_chromium_installed():
 ensure_chromium_installed()
 
 from edgar import (
-    RATE_LIMIT_DELAY, CHROMIUM_ARGS,
+    RATE_LIMIT_DELAY,
+    PDF_MAX_HTML_BYTES, RENDER_SUBPROCESS_TIMEOUT,
     load_ticker_map, resolve_ticker,
     get_filings, filter_filings,
     build_filename, filing_url, download_html,
-    html_to_pdf_bytes,
 )
+
+# Standalone, memory-capped renderer invoked per filing (see render_worker.py).
+RENDER_WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "render_worker.py")
+
+
+def render_pdf_isolated(html_bytes, base_url):
+    """Render one filing to PDF in a separate, memory-capped subprocess.
+    Returns PDF bytes on success, or None if the render failed/was killed —
+    so the caller can fall back to delivering the HTML. The subprocess design
+    means even an OOM kill takes down only the child, never this web worker."""
+    in_path = out_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as f:
+            f.write(html_bytes)
+            in_path = f.name
+        out_path = in_path + ".pdf"
+        proc = subprocess.run(
+            [sys.executable, RENDER_WORKER, in_path, base_url, out_path],
+            capture_output=True, text=True, timeout=RENDER_SUBPROCESS_TIMEOUT,
+        )
+        if proc.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            with open(out_path, "rb") as f:
+                return f.read()
+        print(f"[render] subprocess failed (rc={proc.returncode}): {proc.stderr.strip()[:300]}")
+        return None
+    except subprocess.TimeoutExpired:
+        print("[render] subprocess timed out")
+        return None
+    except Exception as e:
+        print(f"[render] subprocess error: {e}")
+        return None
+    finally:
+        for p in (in_path, out_path):
+            if p and os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass
 
 app = Flask(__name__)
 
@@ -74,56 +112,38 @@ def run_download(job_id, ticker, cik, forms, years, convert_pdf=False):
         all_filings = get_filings(cik)
         filtered = filter_filings(all_filings, forms, years)
 
-        # When converting to PDF, launch ONE Chromium for the whole job (with the
-        # low-memory flags) and reuse it across all filings, instead of launching a
-        # browser per filing. Falls through to HTML on any launch failure.
-        playwright_ctx = None
-        browser = None
-        if convert_pdf:
-            try:
-                from playwright.sync_api import sync_playwright
-                playwright_ctx = sync_playwright().start()
-                browser = playwright_ctx.chromium.launch(args=CHROMIUM_ARGS)
-            except Exception as e:
-                print(f"[run_download] Could not launch Chromium, saving HTML instead: {e}")
-                browser = None
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for filing in filtered:
+                try:
+                    if not filing.get("primary_doc"):
+                        continue
+                    url = filing_url(cik, filing["accession"], filing["primary_doc"])
+                    base_url = url.rsplit("/", 1)[0] + "/"
+                    time.sleep(RATE_LIMIT_DELAY)
+                    html = download_html(url)
 
-        try:
-            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for filing in filtered:
-                    try:
-                        if not filing.get("primary_doc"):
-                            continue
-                        url = filing_url(cik, filing["accession"], filing["primary_doc"])
-                        base_url = url.rsplit("/", 1)[0] + "/"
-                        time.sleep(RATE_LIMIT_DELAY)
-                        html = download_html(url)
-
-                        if convert_pdf and browser is not None:
-                            fname = build_filename(ticker, filing)  # .pdf extension
-                            try:
-                                pdf = html_to_pdf_bytes(html, base_url, browser=browser)
+                    if convert_pdf:
+                        fname = build_filename(ticker, filing)  # .pdf extension
+                        # Size guard: the biggest filings are the ones that risk OOM,
+                        # so deliver them as HTML instead of attempting a render.
+                        if len(html) > PDF_MAX_HTML_BYTES:
+                            print(f"[run_download] {fname} too large for PDF "
+                                  f"({len(html)} bytes) - saving HTML")
+                            zf.writestr(fname.replace(".pdf", ".html"), html)
+                        else:
+                            # Render in an isolated, memory-capped subprocess so a
+                            # crash/OOM never takes down this web worker.
+                            pdf = render_pdf_isolated(html, base_url)
+                            if pdf:
                                 zf.writestr(fname, pdf)
                                 del pdf
-                            except Exception as pdf_err:
-                                print(f"PDF conversion failed for {fname}: {pdf_err}")
+                            else:
                                 zf.writestr(fname.replace(".pdf", "_PDF_FAILED.html"), html)
-                        else:
-                            fname = build_filename(ticker, filing).replace(".pdf", ".html")
-                            zf.writestr(fname, html)
+                    else:
+                        fname = build_filename(ticker, filing).replace(".pdf", ".html")
+                        zf.writestr(fname, html)
 
-                        del html
-                    except Exception:
-                        pass
-        finally:
-            if browser is not None:
-                try:
-                    browser.close()
-                except Exception:
-                    pass
-            if playwright_ctx is not None:
-                try:
-                    playwright_ctx.stop()
+                    del html
                 except Exception:
                     pass
 

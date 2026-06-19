@@ -86,8 +86,9 @@ By default, filings are saved as **HTML files** that open in any browser. This i
 Passing `--pdf` (CLI) or checking **Convert to PDF** in the web UI renders each filing with headless Chromium. This produces real PDFs but is significantly slower and memory-hungry:
 - Typically **5–15 seconds per filing**
 - A 10-year request across multiple form types may take **several minutes**
-- **Memory:** Chromium needs real RAM. Very large filings (e.g. heavy inline-XBRL 10-Ks from high-volume filers) can exceed a 512 MB host. On Render's free tier this can OOM-kill the worker — use HTML mode, or a host with **≥1 GB RAM** for reliable PDF conversion of large filers.
-- If a filing fails to convert, a `_PDF_FAILED.html` fallback is saved instead — open it in your browser to read the filing
+- **Memory:** Chromium needs real RAM. Very large filings can exceed a 512 MB host. To stay reliable on the free tier, each render runs in an isolated, memory-capped subprocess, and filings whose HTML is larger than `PDF_MAX_HTML_MB` (default **6 MB**) are delivered as **HTML instead of PDF** — they'd otherwise risk an out-of-memory crash. Raise `PDF_MAX_HTML_MB` on a host with **≥1 GB RAM** to PDF-convert larger filings.
+- If a filing can't be converted, a `_PDF_FAILED.html` fallback is saved instead — open it in your browser to read the filing
+- Tunable env vars: `PDF_MAX_HTML_MB` (size guard), `RENDER_MEM_LIMIT_MB` (per-render memory cap), `RENDER_SUBPROCESS_TIMEOUT` (per-render seconds)
 
 ---
 
