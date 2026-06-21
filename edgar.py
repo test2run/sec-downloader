@@ -164,14 +164,15 @@ def download_html(url):
     r.raise_for_status()
     return r.content
 
-# Chromium launch flags tuned for low-memory containers (e.g. Render free tier,
-# ~512 MB RAM with a tiny /dev/shm). Without these, rendering a large inline-XBRL
-# filing makes Chromium write past the default 64 MB /dev/shm and the process is
-# OOM-killed by the OS — which crashes the whole worker (not a catchable error).
+# Chromium launch flags for container environments (used by the on-box fallback
+# renderer). Keep these conservative: --disable-dev-shm-usage avoids crashes from
+# the tiny /dev/shm in containers, --no-sandbox is required without user namespaces.
+# NOTE: do NOT add --single-process — it is unstable for headless PDF and crashes
+# renders. Do NOT cap virtual memory (RLIMIT_AS): Chromium reserves multi-GB of
+# virtual address space that is never physically used, so a cap aborts every launch.
 CHROMIUM_ARGS = [
     "--disable-dev-shm-usage",  # use /tmp instead of the tiny /dev/shm
     "--no-sandbox",             # required in most container environments
-    "--single-process",         # one process => lower peak memory
     "--disable-gpu",
 ]
 
@@ -179,19 +180,61 @@ CHROMIUM_ARGS = [
 # caller's fallback instead of hanging and piling up.
 RENDER_TIMEOUT_MS = 60_000
 
-# --- Free-tier PDF safety knobs (used by the web app) ---
-# Filings whose downloaded HTML exceeds this are NOT sent to Chromium; they are
-# delivered as plain HTML instead, since the largest docs are the ones that risk
-# OOMing a 512 MB host. Tune via env var PDF_MAX_HTML_MB.
+# --- PDF rendering config ---
+# Primary renderer is Cloudflare Browser Rendering (off-box, see render_pdf_cloudflare).
+CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID", "").strip()
+CF_API_TOKEN = os.environ.get("CF_API_TOKEN", "").strip()
+CF_PDF_TIMEOUT = int(os.environ.get("CF_PDF_TIMEOUT", "30"))
+
+# Size guard for the ON-BOX fallback only: filings whose HTML exceeds this are
+# delivered as plain HTML rather than risking an OOM on the 512 MB host. Tune via
+# env PDF_MAX_HTML_MB. (Cloudflare has real resources, so it is not size-guarded.)
 PDF_MAX_HTML_BYTES = int(float(os.environ.get("PDF_MAX_HTML_MB", "6")) * 1024 * 1024)
 
-# Hard address-space cap (MB) applied inside the render subprocess via RLIMIT_AS
-# (POSIX only). Keeps a runaway render from triggering the OS OOM-killer against
-# the web worker. Tune via env var RENDER_MEM_LIMIT_MB.
-RENDER_MEM_LIMIT_MB = int(os.environ.get("RENDER_MEM_LIMIT_MB", "450"))
-
-# Wall-clock timeout (seconds) the parent gives each render subprocess.
+# Wall-clock timeout (seconds) the parent gives each on-box render subprocess.
 RENDER_SUBPROCESS_TIMEOUT = int(os.environ.get("RENDER_SUBPROCESS_TIMEOUT", "90"))
+
+
+class CloudflareBudgetError(Exception):
+    """Raised when Cloudflare rejects auth or the daily/rate budget is exhausted,
+    so the caller can stop calling Cloudflare for the rest of the job."""
+
+
+def cloudflare_configured():
+    return bool(CF_ACCOUNT_ID and CF_API_TOKEN)
+
+
+def render_pdf_cloudflare(html_bytes, base_url):
+    """Render one filing to PDF via Cloudflare Browser Rendering's /pdf endpoint.
+    Returns PDF bytes. Raises CloudflareBudgetError on auth/budget failures (so the
+    job stops calling CF), or a generic Exception on other render failures (so the
+    caller falls back to on-box rendering for just this filing)."""
+    if not cloudflare_configured():
+        raise RuntimeError("Cloudflare not configured")
+    html_str = _inject_base_href(html_bytes, base_url)
+    url = (f"https://api.cloudflare.com/client/v4/accounts/"
+           f"{CF_ACCOUNT_ID}/browser-rendering/pdf")
+    resp = requests.post(
+        url,
+        headers={"Authorization": f"Bearer {CF_API_TOKEN}",
+                 "Content-Type": "application/json"},
+        json={"html": html_str,
+              "gotoOptions": {"waitUntil": "load", "timeout": CF_PDF_TIMEOUT * 1000}},
+        timeout=CF_PDF_TIMEOUT + 15,
+    )
+    # Auth / rate / quota problems -> stop using CF for this job.
+    if resp.status_code in (401, 403, 429):
+        raise CloudflareBudgetError(f"Cloudflare HTTP {resp.status_code}: {resp.text[:200]}")
+    ctype = resp.headers.get("Content-Type", "")
+    if resp.status_code == 200 and "application/pdf" in ctype:
+        if not resp.content:
+            raise RuntimeError("Cloudflare returned empty PDF")
+        return resp.content
+    # Error responses come back as the JSON v4 envelope; surface a useful message.
+    detail = resp.text[:300]
+    if "exceeded" in detail.lower() or "limit" in detail.lower() or "quota" in detail.lower():
+        raise CloudflareBudgetError(f"Cloudflare budget exhausted: {detail}")
+    raise RuntimeError(f"Cloudflare /pdf failed (HTTP {resp.status_code}): {detail}")
 
 
 def _inject_base_href(html_bytes, base_url):

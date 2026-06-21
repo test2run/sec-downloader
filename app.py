@@ -42,20 +42,21 @@ ensure_chromium_installed()
 from edgar import (
     RATE_LIMIT_DELAY,
     PDF_MAX_HTML_BYTES, RENDER_SUBPROCESS_TIMEOUT,
+    cloudflare_configured, render_pdf_cloudflare, CloudflareBudgetError,
     load_ticker_map, resolve_ticker,
     get_filings, filter_filings,
     build_filename, filing_url, download_html,
 )
 
-# Standalone, memory-capped renderer invoked per filing (see render_worker.py).
+# Standalone on-box fallback renderer invoked per filing (see render_worker.py).
 RENDER_WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "render_worker.py")
 
 
 def render_pdf_isolated(html_bytes, base_url):
-    """Render one filing to PDF in a separate, memory-capped subprocess.
+    """Render one filing to PDF in a separate subprocess (on-box fallback).
     Returns PDF bytes on success, or None if the render failed/was killed —
     so the caller can fall back to delivering the HTML. The subprocess design
-    means even an OOM kill takes down only the child, never this web worker."""
+    means even a Chromium crash takes down only the child, never this web worker."""
     in_path = out_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as f:
@@ -85,6 +86,30 @@ def render_pdf_isolated(html_bytes, base_url):
                 except Exception:
                     pass
 
+
+def _render_pdf(html_bytes, base_url, cf_state):
+    """Produce PDF bytes for one filing, trying renderers in order:
+    1) Cloudflare Browser Rendering (off-box) while the job's budget holds,
+    2) on-box Chromium subprocess (only if within the size guard).
+    Returns PDF bytes, or None if no renderer succeeded (caller delivers HTML)."""
+    if cf_state.get("enabled"):
+        try:
+            return render_pdf_cloudflare(html_bytes, base_url)
+        except CloudflareBudgetError as e:
+            # Quota/auth exhausted — stop using Cloudflare for the rest of this job.
+            print(f"[render] Cloudflare disabled for this job: {e}")
+            cf_state["enabled"] = False
+        except Exception as e:
+            # Transient/per-filing Cloudflare error — fall back just for this filing.
+            print(f"[render] Cloudflare render failed, falling back on-box: {e}")
+
+    # On-box fallback: only attempt for filings small enough to be safe on 512 MB.
+    if len(html_bytes) <= PDF_MAX_HTML_BYTES:
+        return render_pdf_isolated(html_bytes, base_url)
+    print(f"[render] {len(html_bytes)} bytes exceeds on-box size guard - delivering HTML")
+    return None
+
+
 app = Flask(__name__)
 
 _ticker_map = None
@@ -112,6 +137,11 @@ def run_download(job_id, ticker, cik, forms, years, convert_pdf=False):
         all_filings = get_filings(cik)
         filtered = filter_filings(all_filings, forms, years)
 
+        # PDF render order per filing: Cloudflare (off-box) -> on-box Chromium -> HTML.
+        # cf_state tracks whether Cloudflare is usable for the rest of THIS job; an
+        # auth/budget error flips it off so we don't keep hammering an exhausted quota.
+        cf_state = {"enabled": convert_pdf and cloudflare_configured()}
+
         with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for filing in filtered:
                 try:
@@ -124,21 +154,15 @@ def run_download(job_id, ticker, cik, forms, years, convert_pdf=False):
 
                     if convert_pdf:
                         fname = build_filename(ticker, filing)  # .pdf extension
-                        # Size guard: the biggest filings are the ones that risk OOM,
-                        # so deliver them as HTML instead of attempting a render.
-                        if len(html) > PDF_MAX_HTML_BYTES:
-                            print(f"[run_download] {fname} too large for PDF "
-                                  f"({len(html)} bytes) - saving HTML")
+                        pdf = _render_pdf(html, base_url, cf_state)
+                        if pdf:
+                            zf.writestr(fname, pdf)
+                            del pdf
+                        elif len(html) > PDF_MAX_HTML_BYTES:
+                            # Too big to risk on the on-box host -> deliver as HTML.
                             zf.writestr(fname.replace(".pdf", ".html"), html)
                         else:
-                            # Render in an isolated, memory-capped subprocess so a
-                            # crash/OOM never takes down this web worker.
-                            pdf = render_pdf_isolated(html, base_url)
-                            if pdf:
-                                zf.writestr(fname, pdf)
-                                del pdf
-                            else:
-                                zf.writestr(fname.replace(".pdf", "_PDF_FAILED.html"), html)
+                            zf.writestr(fname.replace(".pdf", "_PDF_FAILED.html"), html)
                     else:
                         fname = build_filename(ticker, filing).replace(".pdf", ".html")
                         zf.writestr(fname, html)

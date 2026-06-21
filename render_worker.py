@@ -1,37 +1,26 @@
 #!/usr/bin/env python3
 """
-Isolated single-filing PDF renderer.
-=====================================
-Renders ONE filing's HTML to a PDF in its own short-lived process, with a hard
-memory cap (RLIMIT_AS on POSIX). The web app invokes this via subprocess so that
-a runaway Chromium render fails *inside this child* (catchable: non-zero exit)
-instead of triggering the OS OOM-killer against the gunicorn worker.
+Isolated single-filing PDF renderer (on-box fallback).
+======================================================
+Renders ONE filing's HTML to a PDF in its own short-lived process. The web app
+invokes this via subprocess so that a Chromium crash/hang fails *inside this child*
+(catchable: non-zero exit / timeout) instead of taking down the gunicorn worker.
+This is the on-box fallback used when Cloudflare Browser Rendering is unavailable.
+
+NOTE: we deliberately do NOT cap virtual memory here. Chromium reserves multi-GB
+of virtual address space that is never physically used, so an RLIMIT_AS cap would
+abort every launch.
 
 Usage:
     python render_worker.py <input_html_path> <base_url> <output_pdf_path>
 
 Exit codes:
     0  -> wrote a valid PDF to <output_pdf_path>
-    !0 -> rendering failed (memory cap hit, timeout, crash, empty output, ...)
+    !0 -> rendering failed (timeout, crash, empty output, ...)
           The parent should fall back to delivering the original HTML.
 """
 
 import sys
-
-
-def _apply_memory_cap():
-    """Cap this process's address space so an over-budget render fails cleanly
-    here rather than OOM-killing the parent. POSIX only; a no-op elsewhere."""
-    try:
-        import resource  # POSIX only
-        from edgar import RENDER_MEM_LIMIT_MB
-        limit = RENDER_MEM_LIMIT_MB * 1024 * 1024
-        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-        new_hard = hard if hard != resource.RLIM_INFINITY else limit
-        resource.setrlimit(resource.RLIMIT_AS, (limit, new_hard))
-    except Exception as e:
-        # Non-POSIX (e.g. Windows dev box) or unsupported — proceed uncapped.
-        print(f"[render_worker] memory cap not applied: {e}", file=sys.stderr)
 
 
 def main():
@@ -40,7 +29,6 @@ def main():
         return 2
 
     in_path, base_url, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
-    _apply_memory_cap()
 
     try:
         from edgar import html_to_pdf_bytes

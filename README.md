@@ -83,12 +83,22 @@ python edgar.py --help
 
 By default, filings are saved as **HTML files** that open in any browser. This is fast and reliable.
 
-Passing `--pdf` (CLI) or checking **Convert to PDF** in the web UI renders each filing with headless Chromium. This produces real PDFs but is significantly slower and memory-hungry:
-- Typically **5–15 seconds per filing**
-- A 10-year request across multiple form types may take **several minutes**
-- **Memory:** Chromium needs real RAM. Very large filings can exceed a 512 MB host. To stay reliable on the free tier, each render runs in an isolated, memory-capped subprocess, and filings whose HTML is larger than `PDF_MAX_HTML_MB` (default **6 MB**) are delivered as **HTML instead of PDF** — they'd otherwise risk an out-of-memory crash. Raise `PDF_MAX_HTML_MB` on a host with **≥1 GB RAM** to PDF-convert larger filings.
-- If a filing can't be converted, a `_PDF_FAILED.html` fallback is saved instead — open it in your browser to read the filing
-- Tunable env vars: `PDF_MAX_HTML_MB` (size guard), `RENDER_MEM_LIMIT_MB` (per-render memory cap), `RENDER_SUBPROCESS_TIMEOUT` (per-render seconds)
+Checking **Convert to PDF** in the web UI produces real PDFs. Rendering is done in this order, per filing, so it stays reliable on a 512 MB host:
+1. **Cloudflare Browser Rendering** (off-box, recommended) — if `CF_ACCOUNT_ID` and `CF_API_TOKEN` are set, the filing is rendered by Cloudflare's hosted browser. This is the robust path: real browser fidelity even for large filings, and it never stresses the web host's memory. See **Cloudflare setup** below.
+2. **On-box Chromium fallback** — used when Cloudflare isn't configured or its daily budget is spent. Runs in an isolated subprocess; filings whose HTML exceeds `PDF_MAX_HTML_MB` (default **6 MB**) are delivered as HTML instead, since the largest docs risk an out-of-memory crash on 512 MB.
+3. **HTML fallback** — if neither renderer succeeds, the filing is saved as `.html` (or `_PDF_FAILED.html`) so you can still read it. The job always completes.
+
+Notes:
+- Typically **5–15 seconds per filing**; a 10-year multi-form request may take **several minutes**.
+- Tunable env vars: `CF_ACCOUNT_ID`, `CF_API_TOKEN`, `CF_PDF_TIMEOUT` (Cloudflare); `PDF_MAX_HTML_MB` (on-box size guard), `RENDER_SUBPROCESS_TIMEOUT` (on-box per-render seconds).
+
+### Cloudflare setup (free tier)
+Cloudflare's **Workers Free** plan includes **10 minutes of browser time/day and 3 concurrent browsers** at no charge — enough for typical use; heavier days fall back to the on-box path automatically.
+1. In the Cloudflare dashboard: **My Profile ▸ API Tokens ▸ Create Custom Token**, grant **Account ▸ Browser Rendering ▸ Edit**, and copy the token.
+2. Find your **Account ID** (dashboard account home / URL).
+3. In **Render ▸ your service ▸ Environment**, add `CF_ACCOUNT_ID` and `CF_API_TOKEN`.
+
+Until those are set, PDF uses the on-box fallback (fine for typical-size filings).
 
 ---
 
@@ -112,7 +122,7 @@ pip install -r requirements.txt && playwright install --with-deps chromium
 gunicorn app:app --workers 1 --threads 4 --timeout 120
 ```
 
-> **Note on the free tier:** the 512 MB free plan is enough for HTML downloads and PDF conversion of typical filings, but large inline-XBRL filings can OOM-kill the worker (the page shows a generic error). For reliable PDF conversion of high-volume filers, use a plan with **≥1 GB RAM**.
+> **Note on the free tier:** the 512 MB free plan is enough for HTML downloads and on-box PDF conversion of typical filings. For reliable PDF conversion of *large* filings without upgrading RAM, configure **Cloudflare Browser Rendering** (see the PDF conversion note) — it renders off-box on Cloudflare's free tier. Optionally set `CF_ACCOUNT_ID` and `CF_API_TOKEN` here in the environment.
 
 ---
 
